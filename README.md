@@ -16,4 +16,4 @@ A beautiful, distraction-free focus timer with everything you need to stay in fl
 Just open `index.html` in any browser — no install, no dependencies, no backend.
 
 ## Live Demo
-🔗 [focusly.vercel.app](https://focusly.vercel.app)
+🔗 [focusly.vercel.app]([https://focusly.vercel.app](https://focusly-theta.vercel.app/))
