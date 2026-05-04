@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>00:00:00 - Focus Timer</title>
+  <title>Focusly — Focus Timer</title>
   <style>
     :root {
       color-scheme: light;
@@ -1210,6 +1210,38 @@
       border-top: 1px solid var(--border);
     }
 
+    .music-restore-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 14px;
+      background: rgba(62, 207, 154, 0.1);
+      border-bottom: 1px solid rgba(62, 207, 154, 0.2);
+      font-size: 0.8rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .music-restore-banner span { flex: 1; }
+
+    .music-restore-dismiss {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .music-playlist-item.ghost {
+      opacity: 0.45;
+    }
+
+    .music-playlist-item.ghost .music-item-name {
+      font-style: italic;
+    }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -1516,7 +1548,7 @@
 
       const POMODORO_WORK_SECONDS = 25 * 60;
       const POMODORO_BREAK_SECONDS = 5 * 60;
-      const APP_NAME = "Focus Timer";
+      const APP_NAME = "Focusly";
       const PROGRESS_RING_CIRCUMFERENCE = 974;
       const BUILT_IN_PRESETS = [
         { label: "15 min", seconds: 15 * 60 },
@@ -3404,13 +3436,14 @@
 
       // ─── Local Music Player ────────────────────────────────────────────────
 
+      const MUSIC_STORAGE_KEY = "focusly.musicPlaylist";
+
       const musicState = {
-        tracks: [],          // { name, url, duration }
+        tracks: [],          // { name, url, duration, ghost: bool }
         currentIndex: -1,
         isPlaying: false,
         shuffle: false,
-        repeat: false,       // "none" | "one" | "all"
-        repeatMode: "none",
+        repeatMode: "none",  // "none" | "one" | "all"
         muted: false,
         volume: 70,
         shuffleOrder: []
@@ -3434,6 +3467,101 @@
         playlist: document.getElementById("musicPlaylist"),
         upload: document.getElementById("musicUpload")
       };
+
+      // ── Persistence helpers ──────────────────────────────────────────────
+
+      function saveMusicState() {
+        try {
+          const data = {
+            tracks: musicState.tracks.map(function (t) {
+              return { name: t.name, duration: t.duration || "" };
+            }),
+            currentIndex: musicState.currentIndex,
+            volume: musicState.volume,
+            shuffle: musicState.shuffle,
+            repeatMode: musicState.repeatMode,
+            muted: musicState.muted
+          };
+          localStorage.setItem(MUSIC_STORAGE_KEY, JSON.stringify(data));
+        } catch (e) { /* storage full — ignore */ }
+      }
+
+      function loadMusicState() {
+        try {
+          const raw = localStorage.getItem(MUSIC_STORAGE_KEY);
+          if (!raw) { return null; }
+          return JSON.parse(raw);
+        } catch (e) { return null; }
+      }
+
+      function restoreMusicStateFromStorage() {
+        const saved = loadMusicState();
+        if (!saved || !saved.tracks || !saved.tracks.length) { return; }
+
+        // Restore ghost tracks (name only, no audio url)
+        musicState.tracks = saved.tracks.map(function (t) {
+          return { name: t.name, duration: t.duration, url: null, ghost: true };
+        });
+        musicState.currentIndex = saved.currentIndex >= 0 && saved.currentIndex < musicState.tracks.length
+          ? saved.currentIndex : 0;
+        musicState.volume = saved.volume || 70;
+        musicState.shuffle = saved.shuffle || false;
+        musicState.repeatMode = saved.repeatMode || "none";
+        musicState.muted = saved.muted || false;
+
+        // Apply restored settings to audio element
+        musicAudio.volume = musicState.volume / 100;
+        musicAudio.muted = musicState.muted;
+        musicEls.volumeSlider.value = String(musicState.volume);
+        musicEls.volIcon.textContent = musicState.muted ? "🔇" : musicState.volume < 40 ? "🔉" : "🔊";
+        musicEls.shuffleBtn.classList.toggle("active", musicState.shuffle);
+        const repeatIcons = { none: "↻", all: "↻", one: "🔂" };
+        musicEls.repeatBtn.textContent = repeatIcons[musicState.repeatMode];
+        musicEls.repeatBtn.classList.toggle("active", musicState.repeatMode !== "none");
+
+        buildShuffleOrder();
+        showRestoreBanner();
+        renderPlaylist();
+
+        // Show last track name greyed out
+        const currentTrack = musicState.tracks[musicState.currentIndex];
+        if (currentTrack) {
+          musicEls.trackName.textContent = currentTrack.name;
+          musicEls.trackName.classList.remove("empty");
+          musicEls.trackName.style.opacity = "0.45";
+          musicEls.trackName.style.fontStyle = "italic";
+          if (currentTrack.duration) {
+            musicEls.duration.textContent = currentTrack.duration;
+          }
+        }
+      }
+
+      function showRestoreBanner() {
+        // Remove existing banner if any
+        const existing = document.getElementById("musicRestoreBanner");
+        if (existing) { existing.remove(); }
+
+        const banner = document.createElement("div");
+        banner.id = "musicRestoreBanner";
+        banner.className = "music-restore-banner";
+        banner.innerHTML =
+          '<span>🔄 Re-upload your music files to resume</span>' +
+          '<button class="music-restore-dismiss" title="Dismiss" type="button">×</button>';
+        banner.querySelector(".music-restore-dismiss").addEventListener("click", function () {
+          banner.remove();
+        });
+
+        // Insert after header
+        const header = musicEls.playlist.closest(".music-player").querySelector(".music-player-header");
+        header.insertAdjacentElement("afterend", banner);
+      }
+
+      function hideRestoreBanner() {
+        const banner = document.getElementById("musicRestoreBanner");
+        if (banner) { banner.remove(); }
+      }
+
+      // ── Core helpers ─────────────────────────────────────────────────────
 
       function formatMusicTime(seconds) {
         if (!seconds || isNaN(seconds)) { return "0:00"; }
@@ -3468,16 +3596,35 @@
       function loadTrack(index, autoplay) {
         if (index < 0 || index >= musicState.tracks.length) { return; }
         const track = musicState.tracks[index];
+        if (track.ghost) {
+          // Can't play ghost tracks — prompt re-upload
+          musicState.currentIndex = index;
+          musicEls.trackName.textContent = track.name;
+          musicEls.trackName.classList.remove("empty");
+          musicEls.trackName.style.opacity = "0.45";
+          musicEls.trackName.style.fontStyle = "italic";
+          musicEls.duration.textContent = track.duration || "0:00";
+          renderPlaylist();
+          return;
+        }
         musicState.currentIndex = index;
         musicAudio.src = track.url;
         musicAudio.load();
         musicEls.trackName.textContent = track.name;
         musicEls.trackName.classList.remove("empty");
+        musicEls.trackName.style.opacity = "";
+        musicEls.trackName.style.fontStyle = "";
         musicEls.progressBar.value = 0;
         musicEls.currentTime.textContent = "0:00";
         musicEls.duration.textContent = track.duration || "0:00";
+        saveMusicState();
         renderPlaylist();
-        if (autoplay) { musicAudio.play().then(function () { musicState.isPlaying = true; updatePlayPauseBtn(); }); }
+        if (autoplay) {
+          musicAudio.play().then(function () {
+            musicState.isPlaying = true;
+            updatePlayPauseBtn();
+          }).catch(function () {});
+        }
       }
 
       function updatePlayPauseBtn() {
@@ -3490,11 +3637,14 @@
           return;
         }
         musicEls.playlist.innerHTML = musicState.tracks.map(function (track, i) {
-          const isPlaying = i === musicState.currentIndex;
-          return '<div class="music-playlist-item' + (isPlaying ? " playing" : "") + '" data-index="' + i + '">' +
+          const isActive = i === musicState.currentIndex;
+          const ghostClass = track.ghost ? " ghost" : "";
+          const playingClass = isActive && !track.ghost ? " playing" : "";
+          const ghostHint = track.ghost ? ' <span style="font-size:0.72rem;color:var(--accent);font-style:normal;font-weight:700;">↑ tap to re-add</span>' : '';
+          return '<div class="music-playlist-item' + playingClass + ghostClass + '" data-index="' + i + '" ' + (track.ghost ? 'title="Click to re-upload this track"' : '') + '>' +
             '<span class="music-item-num">' + (i + 1) + '</span>' +
             '<span class="music-item-playing-icon">♪</span>' +
-            '<span class="music-item-name" title="' + track.name + '">' + track.name + '</span>' +
+            '<span class="music-item-name" title="' + track.name + '">' + track.name + ghostHint + '</span>' +
             '<span class="music-item-duration">' + (track.duration || "") + '</span>' +
             '<button class="music-item-remove" data-remove="' + i + '" title="Remove" type="button">×</button>' +
           '</div>';
@@ -3504,6 +3654,13 @@
           item.addEventListener("click", function (e) {
             if (e.target.dataset.remove !== undefined) { return; }
             const idx = Number(item.dataset.index);
+            const track = musicState.tracks[idx];
+            if (track && track.ghost) {
+              // Clicking a ghost track triggers re-upload
+              musicState._pendingGhostIdx = idx;
+              musicEls.upload.click();
+              return;
+            }
             loadTrack(idx, true);
           });
         });
@@ -3511,14 +3668,14 @@
         musicEls.playlist.querySelectorAll(".music-item-remove").forEach(function (btn) {
           btn.addEventListener("click", function (e) {
             e.stopPropagation();
-            const idx = Number(btn.dataset.remove);
-            removeTrack(idx);
+            removeTrack(Number(btn.dataset.remove));
           });
         });
       }
 
       function removeTrack(idx) {
-        URL.revokeObjectURL(musicState.tracks[idx].url);
+        const track = musicState.tracks[idx];
+        if (track.url) { URL.revokeObjectURL(track.url); }
         musicState.tracks.splice(idx, 1);
         if (musicState.currentIndex === idx) {
           musicAudio.pause();
@@ -3526,6 +3683,8 @@
           musicState.currentIndex = -1;
           musicEls.trackName.textContent = "No track loaded";
           musicEls.trackName.classList.add("empty");
+          musicEls.trackName.style.opacity = "";
+          musicEls.trackName.style.fontStyle = "";
           musicEls.progressBar.value = 0;
           musicEls.currentTime.textContent = "0:00";
           musicEls.duration.textContent = "0:00";
@@ -3534,10 +3693,13 @@
           musicState.currentIndex--;
         }
         buildShuffleOrder();
+        saveMusicState();
         renderPlaylist();
+        if (!musicState.tracks.length) { hideRestoreBanner(); }
       }
 
-      // Audio events
+      // ── Audio events ─────────────────────────────────────────────────────
+
       musicAudio.addEventListener("timeupdate", function () {
         if (!musicAudio.duration) { return; }
         const pct = (musicAudio.currentTime / musicAudio.duration) * 100;
@@ -3549,6 +3711,7 @@
         musicEls.duration.textContent = formatMusicTime(musicAudio.duration);
         if (musicState.currentIndex >= 0) {
           musicState.tracks[musicState.currentIndex].duration = formatMusicTime(musicAudio.duration);
+          saveMusicState();
           renderPlaylist();
         }
       });
@@ -3560,7 +3723,7 @@
           return;
         }
         const next = getNextIndex(1);
-        if (next === -1 || next === musicState.currentIndex && musicState.repeatMode === "none") {
+        if (next === -1) {
           musicState.isPlaying = false;
           updatePlayPauseBtn();
           return;
@@ -3571,10 +3734,13 @@
       musicAudio.addEventListener("play", function () { musicState.isPlaying = true; updatePlayPauseBtn(); });
       musicAudio.addEventListener("pause", function () { musicState.isPlaying = false; updatePlayPauseBtn(); });
 
-      // Controls
+      // ── Controls ─────────────────────────────────────────────────────────
+
       musicEls.playPauseBtn.addEventListener("click", function () {
         if (!musicState.tracks.length) { return; }
         if (musicState.currentIndex === -1) { loadTrack(0, true); return; }
+        const track = musicState.tracks[musicState.currentIndex];
+        if (track && track.ghost) { return; } // can't play ghost
         if (musicState.isPlaying) { musicAudio.pause(); } else { musicAudio.play(); }
       });
 
@@ -3593,6 +3759,7 @@
         musicState.shuffle = !musicState.shuffle;
         musicEls.shuffleBtn.classList.toggle("active", musicState.shuffle);
         if (musicState.shuffle) { buildShuffleOrder(); }
+        saveMusicState();
       });
 
       musicEls.repeatBtn.addEventListener("click", function () {
@@ -3602,7 +3769,9 @@
         const icons = { none: "↻", all: "↻", one: "🔂" };
         musicEls.repeatBtn.textContent = icons[musicState.repeatMode];
         musicEls.repeatBtn.classList.toggle("active", musicState.repeatMode !== "none");
-        musicEls.repeatBtn.title = musicState.repeatMode === "none" ? "Repeat off" : musicState.repeatMode === "all" ? "Repeat all" : "Repeat one";
+        musicEls.repeatBtn.title = musicState.repeatMode === "none" ? "Repeat off" :
+          musicState.repeatMode === "all" ? "Repeat all" : "Repeat one";
+        saveMusicState();
       });
 
       musicEls.progressBar.addEventListener("input", function () {
@@ -3613,32 +3782,87 @@
       musicEls.volumeSlider.addEventListener("input", function () {
         const vol = Number(musicEls.volumeSlider.value) / 100;
         musicAudio.volume = vol;
+        musicState.volume = Number(musicEls.volumeSlider.value);
         musicState.muted = vol === 0;
         musicEls.volIcon.textContent = vol === 0 ? "🔇" : vol < 0.4 ? "🔉" : "🔊";
+        saveMusicState();
       });
 
       musicEls.volIcon.addEventListener("click", function () {
         musicState.muted = !musicState.muted;
         musicAudio.muted = musicState.muted;
-        musicEls.volIcon.textContent = musicState.muted ? "🔇" : Number(musicEls.volumeSlider.value) < 40 ? "🔉" : "🔊";
+        musicEls.volIcon.textContent = musicState.muted ? "🔇" : musicState.volume < 40 ? "🔉" : "🔊";
+        saveMusicState();
       });
 
-      // File upload
+      // ── File upload — with smart name matching ────────────────────────────
+
       musicEls.upload.addEventListener("change", function (e) {
         const files = Array.from(e.target.files || []);
+        let matched = 0;
+        const pendingIdx = musicState._pendingGhostIdx;
+        musicState._pendingGhostIdx = undefined;
+
         files.forEach(function (file) {
+          const cleanName = file.name.replace(/\.[^/.]+$/, "");
           const url = URL.createObjectURL(file);
-          const name = file.name.replace(/\.[^/.]+$/, ""); // strip extension
-          musicState.tracks.push({ name, url, duration: "" });
+
+          // If a specific ghost was clicked, try to match it first by position
+          if (pendingIdx !== undefined && musicState.tracks[pendingIdx] && musicState.tracks[pendingIdx].ghost) {
+            const ghost = musicState.tracks[pendingIdx];
+            // Accept this file for the pending ghost (even if name differs slightly)
+            if (ghost.name === cleanName || files.length === 1) {
+              ghost.url = url;
+              ghost.ghost = false;
+              ghost.name = cleanName; // update name to actual filename
+              matched++;
+              if (pendingIdx === musicState.currentIndex) { loadTrack(pendingIdx, false); }
+              return;
+            }
+          }
+
+          // Otherwise match by name across all ghosts
+          const ghostIdx = musicState.tracks.findIndex(function (t) {
+            return t.ghost && t.name === cleanName;
+          });
+
+          if (ghostIdx !== -1) {
+            musicState.tracks[ghostIdx].url = url;
+            musicState.tracks[ghostIdx].ghost = false;
+            matched++;
+            if (ghostIdx === musicState.currentIndex) { loadTrack(ghostIdx, false); }
+          } else {
+            musicState.tracks.push({ name: cleanName, url, duration: "", ghost: false });
+          }
         });
+
         buildShuffleOrder();
+        saveMusicState();
         renderPlaylist();
-        // Auto-load first track if nothing loaded yet
-        if (musicState.currentIndex === -1 && musicState.tracks.length > 0) {
-          loadTrack(0, false);
+
+        if (musicState.currentIndex === -1) {
+          const firstReal = musicState.tracks.findIndex(function (t) { return !t.ghost; });
+          if (firstReal !== -1) { loadTrack(firstReal, false); }
         }
+
+        const hasGhosts = musicState.tracks.some(function (t) { return t.ghost; });
+        if (!hasGhosts) { hideRestoreBanner(); }
+
+        if (matched > 0) {
+          const banner = document.getElementById("musicRestoreBanner");
+          if (banner) {
+            banner.innerHTML = '<span>✅ ' + matched + ' track' + (matched > 1 ? 's' : '') + ' restored!</span>' +
+              '<button class="music-restore-dismiss" title="Dismiss" type="button">×</button>';
+            banner.querySelector(".music-restore-dismiss").addEventListener("click", function () { banner.remove(); });
+            setTimeout(function () { if (banner.parentNode) { banner.remove(); } }, 3000);
+          }
+        }
+
         e.target.value = "";
       });
+
+      // ── Init: restore from localStorage ──────────────────────────────────
+      restoreMusicStateFromStorage();
 
       // ─── End Local Music Player ────────────────────────────────────────────
 
